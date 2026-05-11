@@ -1019,7 +1019,13 @@ async function doAdd(){
     DATA[id]=processed;if(!ORDER.includes(id))ORDER.push(id);saveDynOrder();
     res.textContent=`✓ ${id} ${processed.name} 新增成功！`;res.className='mres ok';
     buildSidebar();setTimeout(()=>{closeAdd();switchStock(id);},700);
-  }catch(e){res.textContent=`✗ 失敗：${e.message}`;res.className='mres err';}
+  }catch(e){
+    const isCors=e.message==='Failed to fetch';
+    res.innerHTML=isCors
+      ?`✗ 瀏覽器跨域封鎖（CORS）：請先在 <a href="https://finmindtrade.com/analysis/#/user/register" target="_blank" style="color:var(--blue)">FinMind 免費註冊</a> 取得 Token，再點右上角 ⚙ 填入後重試。`
+      :`✗ 失敗：${e.message}`;
+    res.className='mres err';
+  }
   finally{btn.disabled=false;}
 }
 
