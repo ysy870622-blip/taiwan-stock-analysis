@@ -917,12 +917,24 @@ function buildSidebar(){
   else hs.style.display='none';
 }
 function buildTopbar(id){
-  const s=DATA[id],up=s.spread>=0,c=up?'var(--green)':'var(--red)';
+  const s=DATA[id];
+  const fh=filt(id);
+  const last=customFrom&&customTo&&fh.length?fh[fh.length-1]:null;
+  const price=last?last.close:s.price;
+  const openP=last?last.open:s.open;
+  const spread=last?(last.close-last.open):s.spread;
+  const ma20=last?last.ma20:s.ma20;
+  const ma5=last?last.ma5:s.ma5;
+  const rsi=last?last.rsi:s.rsi;
+  const date=last?last.date:s.date;
+  const ma20v=ma20||0;
+  const diff=ma20v?Math.round((price-ma20v)/ma20v*10000)/100:s.diff;
+  const up=spread>=0,c=up?'var(--green)':'var(--red)';
   $('hd-id').textContent=`${id} ${s.name}`;
   $('hd-price').style.color=$('hd-chg').style.color=c;
-  $('hd-price').textContent=num(s.price);
-  $('hd-chg').textContent=`${up?'+':''}${num(s.spread)} (${pct(s.diff)})`;
-  $('hd-meta').textContent=`${s.date}  ·  MA20: ${num(s.ma20)}  ·  5MA: ${num(s.ma5)}  ·  RSI: ${s.rsi??'—'}`;
+  $('hd-price').textContent=num(price);
+  $('hd-chg').textContent=`${up?'+':''}${num(spread)} (${up?'+':''}${diff}%)`;
+  $('hd-meta').textContent=`${date}  ·  MA20: ${num(ma20)}  ·  5MA: ${num(ma5)}  ·  RSI: ${rsi??'—'}`;
 }
 function buildMetrics(id){
   const s=DATA[id],a=scoreStock(id);
@@ -979,42 +991,92 @@ function buildTable(){
 }
 
 /* ═══════════════════════════════════════════════════
-   BUY PANEL
+   BUY PANEL — 江式扣三低全覽 + 其他訊號
 ═══════════════════════════════════════════════════ */
 function buildBuyPanel(){
   const panel=$('buyPanel');
   const vis=ORDER.filter(id=>DATA[id]&&!hidden.has(id));
-  const signals=[];
+
+  // ── 江式扣三低：全部股票條件對照 ──
+  const kouRows=vis.map(id=>{
+    const h=DATA[id].history;
+    if(!h||h.length<62)return null;
+    const ka=kouAnalysis(h,h.length-1);
+    if(!ka)return null;
+    return{id,name:DATA[id].name,price:DATA[id].price,spread:DATA[id].spread,ka};
+  }).filter(Boolean);
+
+  // 三條件都成立排最前，依成立數降序
+  kouRows.sort((a,b)=>{
+    const sa=(a.ka.lowPrice?1:0)+(a.ka.lowPhase?1:0)+(a.ka.lowDeduct?1:0);
+    const sb=(b.ka.lowPrice?1:0)+(b.ka.lowPhase?1:0)+(b.ka.lowDeduct?1:0);
+    return sb-sa;
+  });
+  const fullCount=kouRows.filter(r=>r.ka.lowPrice&&r.ka.lowPhase&&r.ka.lowDeduct).length;
+
+  const kouHTML=kouRows.map(({id,name,price,spread,ka})=>{
+    const cnt=(ka.lowPrice?1:0)+(ka.lowPhase?1:0)+(ka.lowDeduct?1:0);
+    const allMet=cnt===3;
+    const rowBg=allMet?'background:rgba(240,185,11,.06);border-radius:8px;margin:2px 0;':'';
+    const uc=spread>=0?'var(--green)':'var(--red)';
+    const cond=ic=>`<span style="color:${ic?'var(--green)':'var(--red)'};font-size:.65rem">${ic?'✅':'❌'}</span>`;
+    return`<div class="buy-row" style="${rowBg}">
+      <span class="tlink" onclick="switchStock('${id}')" style="font-weight:800;font-size:.74rem;flex-shrink:0;width:52px">${id}</span>
+      <span style="font-size:.66rem;color:var(--sub);flex-shrink:0;width:46px">${name}</span>
+      <span style="font-size:.7rem;font-weight:700;color:${uc};flex-shrink:0;width:52px">${num(price)}</span>
+      <span style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap">
+        <span style="font-size:.62rem;color:${ka.lowPrice?'var(--green)':'var(--muted)'}">${ka.lowPrice?'✅':'❌'} 股價低<span style="color:var(--muted);font-size:.58rem">(${(ka.position*100).toFixed(0)}%)</span></span>
+        <span style="font-size:.62rem;color:${ka.lowPhase?'var(--green)':'var(--muted)'}">${ka.lowPhase?'✅':'❌'} 位階低</span>
+        <span style="font-size:.62rem;color:${ka.lowDeduct?'var(--green)':'var(--muted)'}">${ka.lowDeduct?'✅':'❌'} 扣抵低</span>
+        ${allMet?'<span style="display:inline-block;animation:flm 1.2s ease-in-out infinite;font-size:1rem">🔥</span>':`<span style="font-size:.6rem;color:var(--muted);background:var(--card2);border-radius:4px;padding:1px 6px">${cnt}/3</span>`}
+      </span>
+    </div>`;
+  }).join('');
+
+  // ── 其他技術訊號 ──
+  const techSignals=[];
   vis.forEach(id=>{
     const s=DATA[id],h=s.history;
     if(!h||h.length<62)return;
     const last=h[h.length-1],prev=h[h.length-2]||{};
     const icons=[];
-    const ka=kouAnalysis(h,h.length-1);
-    if(ka&&ka.threeLoSignal)icons.push({ic:'🔥',lbl:'扣三低'});
-    if(last.ma5&&last.ma20&&prev.ma5&&prev.ma20&&prev.ma5<=prev.ma20&&last.ma5>last.ma20)icons.push({ic:'⭐',lbl:'黃金交叉'});
-    if(last.rsi!=null&&last.rsi<30)icons.push({ic:'📊',lbl:'RSI超賣'+last.rsi});
+    if(last.ma5&&last.ma20&&prev.ma5!=null&&prev.ma20!=null&&prev.ma5<=prev.ma20&&last.ma5>last.ma20)icons.push({ic:'⭐',lbl:'黃金交叉'});
+    if(last.rsi!=null&&last.rsi<30)icons.push({ic:'📊',lbl:'RSI '+last.rsi});
     if(last.macd!=null&&last.macd_sig!=null&&prev.macd!=null&&prev.macd_sig!=null&&prev.macd<=prev.macd_sig&&last.macd>last.macd_sig)icons.push({ic:'⚡',lbl:'MACD金叉'});
     const sc=scoreStock(id);
     if(sc.score>=75)icons.push({ic:'💪',lbl:'評分'+sc.score});
-    if(icons.length)signals.push({id,name:s.name,price:s.price,spread:s.spread,icons});
+    if(icons.length)techSignals.push({id,name:s.name,price:s.price,spread:s.spread,icons});
   });
-  if(!signals.length){panel.style.display='none';return;}
-  panel.style.display='';
-  panel.innerHTML=`
+
+  let html=`
     <div class="buy-hd">
-      <div class="buy-title">🎯 今日買點雷達 <span style="font-size:.6rem;font-weight:400;color:var(--muted)">${new Date().toLocaleDateString('zh-TW')}</span></div>
-      <span style="font-size:.58rem;color:var(--muted)">${signals.length} 檔符合</span>
-    </div>`+
-    signals.map(sig=>`
-      <div class="buy-row">
-        <span class="tlink" onclick="switchStock('${sig.id}')" style="font-weight:800;font-size:.75rem">${sig.id}</span>
-        <span style="font-size:.7rem;color:var(--sub)">${sig.name}</span>
-        <span style="font-size:.72rem;font-weight:700;color:${sig.spread>=0?'var(--green)':'var(--red)'};margin-left:auto">${num(sig.price)}</span>
-        <span style="font-size:.65rem;display:flex;gap:5px;flex-wrap:wrap">
-          ${sig.icons.map(ic=>`<span style="background:rgba(240,185,11,.1);border:1px solid rgba(240,185,11,.25);border-radius:4px;padding:1px 6px;color:var(--yellow)">${ic.ic} ${ic.lbl}</span>`).join('')}
-        </span>
-      </div>`).join('');
+      <div class="buy-title">🔥 江式扣三低全覽 <span style="font-size:.58rem;font-weight:400;color:var(--muted)">三條件同時成立才進場</span></div>
+      <span style="font-size:.6rem;padding:2px 8px;border-radius:999px;background:${fullCount?'rgba(240,185,11,.15)':'var(--card2)'};color:${fullCount?'var(--yellow)':'var(--muted)'};font-weight:700">${fullCount?'🔥 '+fullCount+' 檔成立':'目前無成立'}</span>
+    </div>
+    <div style="font-size:.58rem;color:var(--muted);margin-bottom:8px;display:flex;gap:12px">
+      <span>股價低：收盤 ≤ 60MA×1.05</span>
+      <span>位階低：近60日低檔35%</span>
+      <span>扣抵低：未來均值 &lt; 20MA×0.97</span>
+    </div>
+    ${kouHTML}`;
+
+  if(techSignals.length){
+    html+=`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="font-size:.62rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">其他技術買點訊號</div>
+      ${techSignals.map(sig=>`
+        <div class="buy-row">
+          <span class="tlink" onclick="switchStock('${sig.id}')" style="font-weight:800;font-size:.74rem;flex-shrink:0;width:52px">${sig.id}</span>
+          <span style="font-size:.66rem;color:var(--sub);flex-shrink:0;width:46px">${sig.name}</span>
+          <span style="font-size:.7rem;font-weight:700;color:${sig.spread>=0?'var(--green)':'var(--red)'};flex-shrink:0;width:52px">${num(sig.price)}</span>
+          <span style="font-size:.65rem;display:flex;gap:5px;flex-wrap:wrap;margin-left:auto">
+            ${sig.icons.map(ic=>`<span style="background:rgba(58,134,245,.1);border:1px solid rgba(58,134,245,.25);border-radius:4px;padding:1px 6px;color:var(--blue)">${ic.ic} ${ic.lbl}</span>`).join('')}
+          </span>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  panel.style.display='';
+  panel.innerHTML=html;
 }
 
 /* ═══════════════════════════════════════════════════
